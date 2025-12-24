@@ -85,17 +85,17 @@ class TotalEncoder(nn.Module):
         return global_mean_pool(x, batch)
 
     def fp_process(self, desc):
-        return self.fp_encoder(desc)
+        return self.fp_encoder(fp)
 
     def smiles_process(self, sequences):
         sequence = torch.tensor(sequences, device=self.device)
         return self.smiles_encoder(sequence)
 
-    def forward(self, x=None, edge_index=None, desc=None, batch=None, sequences=None, mode='multi_modal'):
+    def forward(self, x=None, edge_index=None, fp=None, batch=None, sequences=None, mode='multi_modal'):
         if mode == 'graph':
             return F.normalize(self.graph_process(x, edge_index, batch), p=2, dim=1)
-        elif mode == 'desc':
-            return F.normalize(self.fp_process(desc), p=2, dim=1)
+        elif mode == 'fp':
+            return F.normalize(self.fp_process(fp), p=2, dim=1)
         elif mode == 'smiles':
             return F.normalize(self.smiles_process(sequences), p=2, dim=1)
         elif mode == 'multi_modal':
@@ -146,10 +146,10 @@ class FineTuneModel(nn.Module):
         relation_scores = relations.max(dim=-1).values
         return relation_scores
 
-    def forward(self, x, edge_index, desc, batch, sequences, severity, mode, in_con, task):
-        graph_emb, desc_emb, smiles_emb = self.encoder(x, edge_index, desc, batch, sequences, mode)
-        severity_emb = self.severity_embedding(severity)   # severity
-        total_ls = [graph_emb, desc_emb, smiles_emb, severity_emb]
+    def forward(self, x, edge_index, fp, batch, sequences, severity, mode, in_con, task):
+        graph_emb, fp_emb, smiles_emb = self.encoder(x, edge_index, fp, batch, sequences, mode)
+        severity_emb = self.severity_embedding(severity)
+        total_ls = [graph_emb, fp_emb, smiles_emb, severity_emb]
         ls = []
         for i in range(len(in_con)):
             if in_con[i]:
@@ -164,7 +164,7 @@ class FineTuneModel(nn.Module):
             out = self.task_most(out)
         return out, {
             'graph_emb': graph_emb,
-            'desc_emb': desc_emb,
+            'fp_emb': fp_emb,
             'smiles_emb': smiles_emb,
             'severity_emb': severity_emb,
             'combined_emb': combined_emb
@@ -193,12 +193,12 @@ def pretrain_step(encoder, args, train_data_batches, train_task_id_list, current
                 data = data.to(device)
                 graph_1 = graph_augment(data)
                 graph_emb1 = model(graph_1.x, graph_1.edge_index, None, graph_1.batch, None, mode='graph')
-                desc_emb = model(None, None, data.desc, None, None, mode='desc')
+                fp_emb = model(None, None, data.fp, None, None, mode='fp')
                 smiles_emb = model(None, None, None, None, data.sequence, mode='smiles')
-                loss_gd = constract_criterion(torch.stack([graph_emb1, desc_emb], dim=1), data.y)
+                loss_gf = constract_criterion(torch.stack([graph_emb1, fp_emb], dim=1), data.y)
                 loss_gs = constract_criterion(torch.stack([graph_emb1, smiles_emb], dim=1), data.y)
-                loss_ds = constract_criterion(torch.stack([desc_emb, smiles_emb], dim=1), data.y)
-                loss_sum = loss_gd + loss_gs + loss_ds
+                loss_fs = constract_criterion(torch.stack([fp_emb, smiles_emb], dim=1), data.y)
+                loss_sum = loss_gf + loss_gs + loss_fs
                 loss_q += loss_sum.item()
                 optimizer.zero_grad()
                 loss_sum.backward()
@@ -263,14 +263,14 @@ def finetune_step(encoder, args, test_data_batches, test_task_id_list, query_smi
                     s_data = s_data.to(args.device)
                 except RuntimeError as e:
                     print(f"Error moving data to {args.device}: {e}")
-                s_representation, _ = model(s_data.x.float(), s_data.edge_index, s_data.desc, s_data.batch, s_data.sequence, s_data.severity, 'multi_modal', in_con, task_id)   # , s_data.concern, args.concern_emb
+                s_representation, _ = model(s_data.x.float(), s_data.edge_index, s_data.fp, s_data.batch, s_data.sequence, s_data.severity, 'multi_modal', in_con, task_id)
                 s_labels = s_data.y
                 loss_cls = criterion_cls(s_representation, s_labels)
                 s_data_graph_aug = graph_augment(s_data)
-                s_data_fp_aug = fp_augment(s_data.desc)
+                s_data_fp_aug = fp_augment(s_data.fp)
                 s_data_smiles_aug = smiles_augment(s_data.sequence, args.vocab_size, args.device)
 
-                rep1, _ = model(s_data.x.float(), s_data.edge_index, s_data.desc, s_data.batch, s_data.sequence,
+                rep1, _ = model(s_data.x.float(), s_data.edge_index, s_data.fp, s_data.batch, s_data.sequence,
                              s_data.severity, 'multi_modal', in_con, task_id)
                 rep2, _ = model(s_data_graph_aug.x.float(), s_data_graph_aug.edge_index, s_data_fp_aug,
                              s_data_graph_aug.batch, s_data_smiles_aug, s_data.severity, 'multi_modal', in_con, task_id)
@@ -327,7 +327,7 @@ def diliprediction(encoder, test_data, args, in_con, task_id):
     preds_, probs_, labels_, smiles = [], [], [], []
     for q_data in q_dataloader:
         q_data = q_data.to(args.device)
-        q_representation, _ = encoder(q_data.x.float(), q_data.edge_index, q_data.desc, q_data.batch, q_data.sequence, q_data.severity, 'multi_modal', in_con, task_id)
+        q_representation, _ = encoder(q_data.x.float(), q_data.edge_index, q_data.fp, q_data.batch, q_data.sequence, q_data.severity, 'multi_modal', in_con, task_id)
         q_labels = q_data.y.float().cpu().detach().numpy()
         probs = torch.softmax(q_representation, dim=1)
         preds = probs.argmax(dim=1)

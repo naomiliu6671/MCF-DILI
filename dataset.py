@@ -166,12 +166,12 @@ def smiles_to_graph(mol, symbol2idx=None, current_idx=None, use_chirality=True):
 
     ecfp = AllChem.GetMorganFingerprintAsBitVect(mol, radius=2, nBits=2048)
     maccs = MACCSkeys.GenMACCSKeys(mol)
-    desc = torch.tensor(
+    fp = torch.tensor(
         np.concatenate([np.array(ecfp, dtype=np.float32), np.array(maccs, dtype=np.float32)]),
         dtype=torch.float
     ).unsqueeze(0)
 
-    return Data(x=x, edge_index=edge_index, edge_attr=edge_attr, desc=desc), symbol2idx, current_idx
+    return Data(x=x, edge_index=edge_index, edge_attr=edge_attr, fp=fp), symbol2idx, current_idx
 
 
 def get_severity(diliseverity, smiles):
@@ -208,7 +208,7 @@ class MoleculeDataset(InMemoryDataset):
         data = Data()
         data['smiles'] = self.smiles_list[idx]
         data['sequence'] = self.seqences[idx]
-        for key in ['x', 'edge_index', 'desc', 'y']:        # , 'concern'
+        for key in ['x', 'edge_index', 'fp', 'y']:
             item, slices = self.data[key], self.slices[key]
             s = list(repeat(slice(None), item.dim()))
             s[data.__cat_dim__(key, item)] = slice(slices[idx], slices[idx + 1])

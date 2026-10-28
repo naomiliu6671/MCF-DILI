@@ -1,4 +1,4 @@
-# MCF-DILI: Multimodal Contrastive Few-Shot Learning Framework for DILI Risk Prediction
+# MCF-DILI: A Multimodal Contrastive Few-shot Framework for Drug-Induced Liver Injury Risk Prediction
 
 ## Overview
 
